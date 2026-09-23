@@ -53,6 +53,20 @@ function requestLocation() {
   })
 }
 
+async function reverseGeocode(lat, lng) {
+  try {
+    const r = await fetch(
+      `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}&zoom=18&accept-language=uz,ru`
+    )
+    const j = await r.json()
+    const a = j.address || {}
+    const street = [a.road, a.house_number].filter(Boolean).join(', ')
+    return street || (j.display_name || '').split(',').slice(0, 2).join(',').trim() || null
+  } catch {
+    return null
+  }
+}
+
 function Photo({ src, alt }) {
   const [ok, setOk] = useState(true)
   if (!src || !ok) {
@@ -148,12 +162,11 @@ export default function App() {
   const askLocation = async () => {
     setLocState('loading')
     const c = await withTimeout(requestLocation(), 15000)
-    if (c) {
-      setCoords(c)
-      setLocState('done')
-    } else {
-      setLocState('failed')
-    }
+    if (!c) return setLocState('failed')
+    setCoords(c)
+    setLocState('done')
+    const street = await withTimeout(reverseGeocode(c.lat, c.lng), 8000)
+    if (street) setAddress((prev) => (prev.trim() ? prev : street + ', '))
   }
 
   const submit = () => {
