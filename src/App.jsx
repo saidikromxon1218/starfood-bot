@@ -17,6 +17,42 @@ const CATEGORY_PHOTO = {
 
 const fmt = (n) => n.toLocaleString('ru-RU') + " so'm"
 
+const withTimeout = (promise, ms) =>
+  Promise.race([promise, new Promise((r) => setTimeout(() => r(null), ms))])
+
+function requestPhone() {
+  return new Promise((resolve) => {
+    const tg = window.Telegram?.WebApp
+    if (!tg?.requestContact || !tg.isVersionAtLeast?.('6.9')) return resolve(null)
+    tg.requestContact((sent, res) => {
+      if (!sent) return resolve(null)
+      resolve(res?.responseUnsafe?.contact?.phone_number || null)
+    })
+  })
+}
+
+function requestLocation() {
+  return new Promise((resolve) => {
+    const viaBrowser = () => {
+      if (!navigator.geolocation) return resolve(null)
+      navigator.geolocation.getCurrentPosition(
+        (p) => resolve({ lat: p.coords.latitude, lng: p.coords.longitude }),
+        () => resolve(null),
+        { enableHighAccuracy: true, timeout: 10000 }
+      )
+    }
+    const tg = window.Telegram?.WebApp
+    const lm = tg?.LocationManager
+    if (!lm || !tg.isVersionAtLeast?.('8.0')) return viaBrowser()
+    const go = () => {
+      if (!lm.isLocationAvailable) return viaBrowser()
+      lm.getLocation((loc) => resolve(loc ? { lat: loc.latitude, lng: loc.longitude } : null))
+    }
+    if (lm.isInited) go()
+    else lm.init(go)
+  })
+}
+
 function Photo({ src, alt }) {
   const [ok, setOk] = useState(true)
   if (!src || !ok) {
@@ -49,6 +85,13 @@ export default function App() {
   const [activeCat, setActiveCat] = useState(null)
   const [sizeFor, setSizeFor] = useState(null)
   const [view, setView] = useState('menu')
+
+  const [phone, setPhone] = useState('')
+  const [phoneVerified, setPhoneVerified] = useState(false)
+  const [coords, setCoords] = useState(null)
+  const [locState, setLocState] = useState('idle')
+  const [address, setAddress] = useState('')
+  const [note, setNote] = useState('')
 
   useEffect(() => {
     const tg = window.Telegram?.WebApp
@@ -92,7 +135,93 @@ export default function App() {
     document.getElementById('cat-' + cat)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
 
+  const askPhone = async () => {
+    const n = await withTimeout(requestPhone(), 30000)
+    if (n) {
+      setPhone(n.startsWith('+') ? n : '+' + n)
+      setPhoneVerified(true)
+    } else {
+      alert("Raqam olinmadi. Iltimos, qo'lda yozing.")
+    }
+  }
+
+  const askLocation = async () => {
+    setLocState('loading')
+    const c = await withTimeout(requestLocation(), 15000)
+    if (c) {
+      setCoords(c)
+      setLocState('done')
+    } else {
+      setLocState('failed')
+    }
+  }
+
+  const submit = () => {
+    const where = coords ? `${coords.lat.toFixed(5)}, ${coords.lng.toFixed(5)}` : "yo'q"
+    alert(
+      `TEST\nTel: ${phone}\nManzil: ${address}\nJoylashuv: ${where}\nIzoh: ${note || '-'}\nJami: ${fmt(total)}`
+    )
+  }
+
   if (error) return <p className="p-4 text-red-500">Xato: {error}</p>
+
+  if (view === 'checkout') {
+    const digits = phone.replace(/\D/g, '')
+    const canSubmit = count > 0 && digits.length >= 9 && address.trim().length >= 5
+    return (
+      <div className="min-h-screen bg-neutral-950 text-white p-4 pb-32">
+        <button onClick={() => setView('cart')} className="text-sm text-neutral-400 mb-4">
+          ← Savatga qaytish
+        </button>
+        <h1 className="text-2xl font-bold mb-5">Rasmiylashtirish</h1>
+
+        <p className="text-sm text-neutral-400 mb-2">Telefon raqam</p>
+        <button onClick={askPhone} className="w-full py-3 rounded-xl font-semibold mb-2"
+          style={{ background: GREEN }}>
+          📱 Raqamni ulashish
+        </button>
+        <div className="relative mb-5">
+          <input type="tel" inputMode="tel" value={phone}
+            onChange={(e) => { setPhone(e.target.value); setPhoneVerified(false) }}
+            placeholder="+998 90 123 45 67"
+            className="w-full px-4 py-3 rounded-xl bg-neutral-900 outline-none" />
+          {phoneVerified && <span className="absolute right-4 top-3" style={{ color: GREEN }}>✓</span>}
+        </div>
+
+        <p className="text-sm text-neutral-400 mb-2">Yetkazib berish manzili</p>
+        <button onClick={askLocation} disabled={locState === 'loading'}
+          className="w-full py-3 rounded-xl bg-neutral-900 mb-2">
+          {locState === 'loading' ? 'Aniqlanmoqda...'
+            : locState === 'done' ? '📍 Joylashuv olindi ✓'
+              : '📍 Joylashuvni yuborish'}
+        </button>
+        {locState === 'failed' && (
+          <p className="text-xs text-amber-400 mb-2">Joylashuv olinmadi. Manzilni batafsil yozing.</p>
+        )}
+        <textarea value={address} onChange={(e) => setAddress(e.target.value)} rows={3}
+          placeholder="Ko'cha, uy, qavat, xonadon, mo'ljal"
+          className="w-full px-4 py-3 rounded-xl bg-neutral-900 outline-none mb-5" />
+
+        <p className="text-sm text-neutral-400 mb-2">Izoh (ixtiyoriy)</p>
+        <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Masalan: piyozsiz"
+          className="w-full px-4 py-3 rounded-xl bg-neutral-900 outline-none mb-5" />
+
+        <p className="text-sm text-neutral-400 mb-2">To'lov</p>
+        <div className="px-4 py-3 rounded-xl bg-neutral-900 mb-5">💵 Naqd pul</div>
+
+        <div className="flex justify-between text-lg font-bold">
+          <span>Jami</span><span>{fmt(total)}</span>
+        </div>
+        <p className="text-xs text-neutral-500 mt-1">+ yetkazib berish narxi</p>
+
+        <button onClick={submit} disabled={!canSubmit}
+          className="fixed bottom-4 left-4 right-4 py-4 rounded-2xl font-semibold"
+          style={{ background: canSubmit ? GREEN : '#333', color: canSubmit ? '#fff' : '#888' }}>
+          Buyurtma berish
+        </button>
+      </div>
+    )
+  }
 
   if (view === 'cart') {
     return (
@@ -116,7 +245,7 @@ export default function App() {
             <div className="flex justify-between text-lg font-bold mt-4">
               <span>Jami</span><span>{fmt(total)}</span>
             </div>
-            <button onClick={() => alert('Keyingi qadam: rasmiylashtirish')}
+            <button onClick={() => setView('checkout')}
               className="fixed bottom-4 left-4 right-4 py-4 rounded-2xl font-semibold"
               style={{ background: GREEN }}>
               Buyurtmani rasmiylashtirish
