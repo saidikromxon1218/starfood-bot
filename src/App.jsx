@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { supabase } from './supabase'
 
 const GREEN = '#22a33b'
+const SHOP_PHONE = '+998 93 009 70 00'
 
 const CATEGORY_PHOTO = {
   'Pitsa': '/menus/pitsa.jpg',
@@ -107,6 +108,9 @@ export default function App() {
   const [address, setAddress] = useState('')
   const [note, setNote] = useState('')
 
+  const [sending, setSending] = useState(false)
+  const [orderNumber, setOrderNumber] = useState(null)
+
   useEffect(() => {
     const tg = window.Telegram?.WebApp
     tg?.ready()
@@ -169,18 +173,60 @@ export default function App() {
     if (street) setAddress((prev) => (prev.trim() ? prev : street + ', '))
   }
 
-  const submit = () => {
-    const where = coords ? `${coords.lat.toFixed(5)}, ${coords.lng.toFixed(5)}` : "yo'q"
-    alert(
-      `TEST\nTel: ${phone}\nManzil: ${address}\nJoylashuv: ${where}\nIzoh: ${note || '-'}\nJami: ${fmt(total)}`
-    )
+  const submit = async () => {
+    if (sending) return
+    setSending(true)
+    try {
+      const { data, error } = await supabase.functions.invoke('create-order', {
+        body: {
+          initData: window.Telegram?.WebApp?.initData || '',
+          items: lines.map(([, l]) => ({
+            id: l.item.id,
+            variant: l.variant?.label ?? null,
+            qty: l.qty,
+          })),
+          phone,
+          address,
+          note,
+          lat: coords?.lat ?? null,
+          lng: coords?.lng ?? null,
+        },
+      })
+      if (error || !data?.ok) throw error || new Error('failed')
+
+      window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred('success')
+      setOrderNumber(data.number)
+      setCart({})
+      setNote('')
+      setView('done')
+    } catch (e) {
+      console.error(e)
+      alert(`Buyurtma yuborilmadi. Qayta urinib ko'ring yoki qo'ng'iroq qiling: ${SHOP_PHONE}`)
+    } finally {
+      setSending(false)
+    }
   }
 
   if (error) return <p className="p-4 text-red-500">Xato: {error}</p>
 
+  if (view === 'done') {
+    return (
+      <div className="min-h-screen bg-neutral-950 text-white p-6 flex flex-col items-center justify-center text-center">
+        <div className="text-6xl mb-4">✅</div>
+        <h1 className="text-2xl font-bold mb-2">Buyurtma #{orderNumber} yuborildi</h1>
+        <p className="text-neutral-400 mb-6">Operator tez orada buyurtmangizni tasdiqlaydi.</p>
+        <p className="text-sm text-neutral-500 mb-10">Savollar uchun: {SHOP_PHONE}</p>
+        <button onClick={() => setView('menu')}
+          className="w-full py-4 rounded-2xl font-semibold" style={{ background: GREEN }}>
+          Menyuga qaytish
+        </button>
+      </div>
+    )
+  }
+
   if (view === 'checkout') {
     const digits = phone.replace(/\D/g, '')
-    const canSubmit = count > 0 && digits.length >= 9 && address.trim().length >= 5
+    const canSubmit = count > 0 && digits.length >= 9 && address.trim().length >= 5 && !sending
     return (
       <div className="min-h-screen bg-neutral-950 text-white p-4 pb-32">
         <button onClick={() => setView('cart')} className="text-sm text-neutral-400 mb-4">
@@ -230,7 +276,7 @@ export default function App() {
         <button onClick={submit} disabled={!canSubmit}
           className="fixed bottom-4 left-4 right-4 py-4 rounded-2xl font-semibold"
           style={{ background: canSubmit ? GREEN : '#333', color: canSubmit ? '#fff' : '#888' }}>
-          Buyurtma berish
+          {sending ? 'Yuborilmoqda...' : 'Buyurtma berish'}
         </button>
       </div>
     )
