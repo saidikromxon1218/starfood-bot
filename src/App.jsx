@@ -3,6 +3,7 @@ import { supabase } from './supabase'
 
 const GREEN = '#22a33b'
 const SHOP_PHONE = '+998 93 009 70 00'
+const STAMPS_NEEDED = 8
 
 const CATEGORY_PHOTO = {
   'Pitsa': '/menus/pitsa.jpg',
@@ -14,6 +15,13 @@ const CATEGORY_PHOTO = {
   'Trindwich': '/menus/trindwich.jpg',
   'Gazaklar': '/menus/gazaklar.jpg',
   'Souslar': '/menus/souslar.jpg',
+}
+
+const STATUS_LABEL = {
+  sent: '🕐 Yuborildi',
+  accepted: '✅ Qabul qilindi',
+  en_route: "🛵 Yo'lda",
+  delivered: '📦 Yetkazildi',
 }
 
 const fmt = (n) => n.toLocaleString('ru-RU') + " so'm"
@@ -110,6 +118,30 @@ export default function App() {
 
   const [sending, setSending] = useState(false)
   const [orderNumber, setOrderNumber] = useState(null)
+  const [me, setMe] = useState(null)
+
+  const loadMe = async (prefill) => {
+    const initData = window.Telegram?.WebApp?.initData
+    if (!initData) return
+    try {
+      const { data } = await supabase.functions.invoke('me', { body: { initData } })
+      if (!data || data.error) return
+      setMe(data)
+      if (prefill) {
+        if (data.phone) {
+          setPhone(data.phone)
+          setPhoneVerified(true)
+        }
+        if (data.address) setAddress(data.address)
+        if (data.lat != null && data.lng != null) {
+          setCoords({ lat: data.lat, lng: data.lng })
+          setLocState('saved')
+        }
+      }
+    } catch (e) {
+      console.error(e)
+    }
+  }
 
   useEffect(() => {
     const tg = window.Telegram?.WebApp
@@ -123,6 +155,8 @@ export default function App() {
         if (error) setError(error.message)
         else setItems(data)
       })
+
+    loadMe(true)
   }, [])
 
   const categories = useMemo(() => [...new Set(items.map((i) => i.category))], [items])
@@ -151,6 +185,27 @@ export default function App() {
   const goTo = (cat) => {
     setActiveCat(cat)
     document.getElementById('cat-' + cat)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+
+  const reorder = () => {
+    const lo = me?.lastOrder
+    if (!lo) return
+    const next = {}
+    let skipped = 0
+    for (const it of lo.items || []) {
+      const item = items.find((m) => m.id === it.menu_item_id)
+      if (!item) { skipped++; continue }
+      let variant = null
+      if (it.variant_label) {
+        variant = (item.variants || []).find((v) => v.label === it.variant_label)
+        if (!variant) { skipped++; continue }
+      }
+      const key = keyOf(item, variant)
+      next[key] = { item, variant, qty: (next[key]?.qty || 0) + it.qty }
+    }
+    setCart(next)
+    setView('cart')
+    if (skipped) alert("Ba'zi mahsulotlar hozir mavjud emas.")
   }
 
   const askPhone = async () => {
@@ -199,6 +254,7 @@ export default function App() {
       setCart({})
       setNote('')
       setView('done')
+      loadMe(false)
     } catch (e) {
       console.error(e)
       alert(`Buyurtma yuborilmadi. Qayta urinib ko'ring yoki qo'ng'iroq qiling: ${SHOP_PHONE}`)
@@ -216,7 +272,7 @@ export default function App() {
         <h1 className="text-2xl font-bold mb-2">Buyurtma #{orderNumber} yuborildi</h1>
         <p className="text-neutral-400 mb-6">Operator tez orada buyurtmangizni tasdiqlaydi.</p>
         <p className="text-sm text-neutral-500 mb-10">Savollar uchun: {SHOP_PHONE}</p>
-        <button onClick={() => setView('menu')}
+        <button onClick={() => { setView('menu'); loadMe(false) }}
           className="w-full py-4 rounded-2xl font-semibold" style={{ background: GREEN }}>
           Menyuga qaytish
         </button>
@@ -235,10 +291,12 @@ export default function App() {
         <h1 className="text-2xl font-bold mb-5">Rasmiylashtirish</h1>
 
         <p className="text-sm text-neutral-400 mb-2">Telefon raqam</p>
-        <button onClick={askPhone} className="w-full py-3 rounded-xl font-semibold mb-2"
-          style={{ background: GREEN }}>
-          📱 Raqamni ulashish
-        </button>
+        {!phoneVerified && (
+          <button onClick={askPhone} className="w-full py-3 rounded-xl font-semibold mb-2"
+            style={{ background: GREEN }}>
+            📱 Raqamni ulashish
+          </button>
+        )}
         <div className="relative mb-5">
           <input type="tel" inputMode="tel" value={phone}
             onChange={(e) => { setPhone(e.target.value); setPhoneVerified(false) }}
@@ -252,7 +310,8 @@ export default function App() {
           className="w-full py-3 rounded-xl bg-neutral-900 mb-2">
           {locState === 'loading' ? 'Aniqlanmoqda...'
             : locState === 'done' ? '📍 Joylashuv olindi ✓'
-              : '📍 Joylashuvni yuborish'}
+              : locState === 'saved' ? '📍 Oldingi joylashuv ✓ · yangilash'
+                : '📍 Joylashuvni yuborish'}
         </button>
         {locState === 'failed' && (
           <p className="text-xs text-amber-400 mb-2">Joylashuv olinmadi. Manzilni batafsil yozing.</p>
@@ -315,6 +374,8 @@ export default function App() {
     )
   }
 
+  const stamps = me?.stamps ?? 0
+
   return (
     <div className="min-h-screen bg-neutral-950 text-white pb-28">
       <header className="px-4 pt-4 pb-2">
@@ -322,7 +383,49 @@ export default function App() {
         <p className="text-sm text-neutral-400">Olmaliq · Yetkazib berish</p>
       </header>
 
-      <nav className="sticky top-0 z-10 bg-neutral-950 px-4 py-2 flex gap-2 overflow-x-auto whitespace-nowrap">
+      {me && (
+        <div className="mx-4 mt-2 p-4 rounded-2xl bg-neutral-900">
+          <div className="flex justify-between items-center mb-3">
+            <span className="font-semibold">⭐ Sodiqlik kartasi</span>
+            <span className="text-sm text-neutral-400">
+              {Math.min(stamps, STAMPS_NEEDED)}/{STAMPS_NEEDED}
+            </span>
+          </div>
+          <div className="flex gap-2">
+            {Array.from({ length: STAMPS_NEEDED }).map((_, i) => (
+              <div key={i} className="flex-1 aspect-square rounded-full grid place-items-center text-sm"
+                style={{ background: i < stamps ? GREEN : '#262626' }}>
+                {i < stamps ? '★' : ''}
+              </div>
+            ))}
+          </div>
+          <p className="text-xs text-neutral-400 mt-3">
+            {stamps >= STAMPS_NEEDED
+              ? "🎁 Sovg'angiz tayyor! Buyurtmada operatorga ayting."
+              : `Yana ${STAMPS_NEEDED - stamps} ta buyurtmadan keyin — sovg'a!`}
+          </p>
+        </div>
+      )}
+
+      {me?.lastOrder && (
+        <div className="mx-4 mt-3 p-4 rounded-2xl bg-neutral-900">
+          <div className="flex justify-between items-center mb-1">
+            <span className="font-semibold">Oxirgi buyurtma #{me.lastOrder.number}</span>
+            <span className="text-sm text-neutral-400">{STATUS_LABEL[me.lastOrder.status] || ''}</span>
+          </div>
+          <p className="text-xs text-neutral-400 line-clamp-2 mb-3">
+            {(me.lastOrder.items || [])
+              .map((i) => `${i.qty}× ${i.name}${i.variant_label ? ' ' + i.variant_label : ''}`)
+              .join(', ')}
+          </p>
+          <button onClick={reorder}
+            className="w-full py-2.5 rounded-xl font-semibold" style={{ background: GREEN }}>
+            🔁 Qayta buyurtma
+          </button>
+        </div>
+      )}
+
+      <nav className="sticky top-0 z-10 bg-neutral-950 px-4 py-2 mt-2 flex gap-2 overflow-x-auto whitespace-nowrap">
         {categories.map((cat) => (
           <button key={cat} onClick={() => goTo(cat)}
             className="px-4 py-1.5 rounded-full text-sm shrink-0"
