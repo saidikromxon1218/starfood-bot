@@ -103,6 +103,7 @@ function Stepper({ qty, onDec, onInc }) {
 
 export default function App() {
   const [items, setItems] = useState([])
+  const [menuLoaded, setMenuLoaded] = useState(false)
   const [error, setError] = useState(null)
   const [cart, setCart] = useState({})
   const [activeCat, setActiveCat] = useState(null)
@@ -154,6 +155,7 @@ export default function App() {
       .then(({ data, error }) => {
         if (error) setError(error.message)
         else setItems(data)
+        setMenuLoaded(true)
       })
 
     loadMe(true)
@@ -261,6 +263,15 @@ export default function App() {
     } finally {
       setSending(false)
     }
+  }
+
+  if (!menuLoaded) {
+    return (
+      <div className="min-h-screen bg-neutral-950 text-white flex flex-col items-center justify-center">
+        <h1 className="text-3xl font-extrabold mb-3" style={{ color: GREEN }}>STAR FOOD</h1>
+        <p className="text-neutral-500">Yuklanmoqda...</p>
+      </div>
+    )
   }
 
   if (error) return <p className="p-4 text-red-500">Xato: {error}</p>
